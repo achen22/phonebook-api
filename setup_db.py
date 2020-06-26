@@ -3,6 +3,7 @@ from database.models import Contact
 from datetime import date
 
 if __name__ == "__main__":
+    db.drop_all(app=app)
     db.create_all(app=app)
 
     with app.app_context():
