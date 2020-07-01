@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect
 from flask_restx import Resource, Api, fields
 from database.models import db, Contact
 import settings
@@ -6,7 +6,7 @@ from datetime import datetime, date
 import api.parsers as parsers
 
 app = Flask(__name__)
-api = Api(app, title='Phonebook API', prefix='/api')
+api = Api(app, title='Phonebook API', description='A RESTful Web API for my Phonebook Android app', prefix='/api', doc='/api/')
 ns = api.namespace('Contact', description='Operations related to contacts')
 
 # configure database
@@ -16,15 +16,19 @@ db.init_app(app)
 
 # models
 contact_model = api.model('Contact', {
-    'id': fields.Integer,
-    'name': fields.String,
-    'email': fields.String,
-    'phone': fields.String,
-    'dob': fields.Date
+    'id': fields.Integer(readonly=True, description="The contact's unique identifier"),
+    'name': fields.String(required=True, min_length=1, description="The contact's name"),
+    'email': fields.String(description="The contact's email address"),
+    'phone': fields.String(description="The contact's phone number"),
+    'dob': fields.Date(description="The contact's date of birth")
 })
 
 def marshal(contact):
     return api.marshal(contact, contact_model)
+
+@app.route('/')
+def home():
+    return redirect('/api/')
 
 @app.route('/test')
 def test():
@@ -34,18 +38,25 @@ def test():
 @ns.route('/')
 class ContactApi(Resource):
     @api.marshal_list_with(contact_model)
-    @api.expect(parsers.since)
+    @api.expect(parsers.date_range)
     def get(self):
         """
         Returns list of phonebook contacts.
         """
-        args = parsers.since.parse_args(request)
-        last_updated_at = args['since']
+        args = parsers.date_range.parse_args(request)
+        query = Contact.query
 
-        if last_updated_at:
-            timestamp = datetime.fromtimestamp(last_updated_at)
-            return Contact.query.filter(Contact.updated_at > timestamp).all()
-        return Contact.query.all()
+        timestamp = args['from']
+        if timestamp:
+            dt = datetime.fromtimestamp(timestamp)
+            query = query.filter(Contact.updated_at > dt)
+        
+        timestamp = args['to']
+        if timestamp:
+            dt = datetime.fromtimestamp(timestamp)
+            query = query.filter(Contact.updated_at < dt)
+
+        return query.all()
     
     @api.response(201, 'Contact successfully created', contact_model)
     @api.response(400, 'Contact name cannot be empty')
@@ -82,14 +93,14 @@ class SingleContactApi(Resource):
         """
         Updates a phonebook contact.
         """
-        if request.json.get('id') != id:
+        args = parsers.existing_contact.parse_args(request)
+        if args['id'] != id:
             return {'errors': {'id': 'Does not match path id'}}, 400
+        if not args['name']:
+            return {'errors': {'name': 'Non-empty string required'}}, 400
         contact = Contact.query.get(id)
         if not contact:
             return {'errors': {'id': 'No contact with this id'}}, 404
-        args = parsers.existing_contact.parse_args(request)
-        if not args['name']:
-            return {'errors': {'name': 'Non-empty string required'}}, 400
         contact.name = args['name']
         contact.email = args['email']
         contact.phone = args['phone']
